@@ -1,5 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+declare var process: { env: Record<string, string | undefined> };
+
 const DISCORD_API = "https://discord.com/api/v10";
 
 interface CommandResult {
