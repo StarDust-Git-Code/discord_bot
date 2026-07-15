@@ -1,14 +1,14 @@
 const express = require("express");
 const path = require("path");
+const crypto = require("crypto");
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
-const { createMcpExpressApp } = require("@modelcontextprotocol/sdk/server/express.js");
-const { createServer } = require("@pasympa/discord-mcp/dist/server.js");
+const { createServer: createDiscordMcpServer } = require("@pasympa/discord-mcp/dist/server.js");
 const { start: startGeminiBot, shutdown: shutdownGeminiBot } = require("./gemini-bot.js");
 
 const PORT = process.env.PORT || 3000;
 const DISCORD_API = "https://discord.com/api/v10";
 
-// ─── Gemini + Discord command handler ────────────────────────────────────
+// ─── Discord REST helpers ────────────────────────────────────────────────
 
 async function discordFetch(path, options = {}) {
   const token = process.env.DISCORD_TOKEN;
@@ -32,7 +32,7 @@ async function parseCommand(command) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: command }] }],
-        systemInstruction: { role: "user", parts: [{ text: `Parse the request and respond with JSON only.
+        systemInstruction: { role: "user", parts: [{ text: `Parse as JSON only.
 Actions: LIST_GUILDS, LIST_CHANNELS (guild_id), CREATE_CHANNEL (guild_id,name,type=0|2|4,topic?,parent_id?), EDIT_CHANNEL (channel_id,name?,topic?), DELETE_CHANNEL (channel_id), SEND_MESSAGE (channel_id,content)
 Channel types: 0=text, 2=voice, 4=category
 Response: { "action": "ACTION", "params": { ... } }` }] },
@@ -48,27 +48,25 @@ Response: { "action": "ACTION", "params": { ... } }` }] },
 async function executeAction(action, params) {
   switch (action) {
     case "LIST_GUILDS": {
-      const guilds = await discordFetch("/users/@me/guilds");
-      return { success: true, message: guilds.map((g) => `${g.name} (id: ${g.id})`).join("\n") };
+      const g = await discordFetch("/users/@me/guilds");
+      return { success: true, message: g.map((x) => `${x.name} (id: ${x.id})`).join("\n") };
     }
     case "LIST_CHANNELS": {
-      const channels = await discordFetch(`/guilds/${params.guild_id}/channels`);
-      const list = channels.filter((c) => [0, 2, 4].includes(c.type))
-        .map((c) => `#${c.name} (${["text", "voice", "category"][c.type]}, id: ${c.id})`).join("\n");
-      return { success: true, message: list || "No channels" };
+      const c = await discordFetch(`/guilds/${params.guild_id}/channels`);
+      return { success: true, message: c.filter((x) => [0, 2, 4].includes(x.type)).map((x) => `#${x.name} (${["text","voice","category"][x.type]}, id: ${x.id})`).join("\n") || "No channels" };
     }
     case "CREATE_CHANNEL": {
-      const body = { name: params.name, type: params.type ?? 0 };
-      if (params.topic) body.topic = params.topic;
-      if (params.parent_id) body.parent_id = params.parent_id;
-      const ch = await discordFetch(`/guilds/${params.guild_id}/channels`, { method: "POST", body: JSON.stringify(body) });
-      return { success: true, message: `Created ${["text", "voice", "category"][ch.type] || "channel"} #${ch.name}` };
+      const b = { name: params.name, type: params.type ?? 0 };
+      if (params.topic) b.topic = params.topic;
+      if (params.parent_id) b.parent_id = params.parent_id;
+      const ch = await discordFetch(`/guilds/${params.guild_id}/channels`, { method: "POST", body: JSON.stringify(b) });
+      return { success: true, message: `Created ${["text","voice","category"][ch.type] || "channel"} #${ch.name}` };
     }
     case "EDIT_CHANNEL": {
-      const body = {};
-      if (params.name) body.name = params.name;
-      if (params.topic !== undefined) body.topic = params.topic;
-      await discordFetch(`/channels/${params.channel_id}`, { method: "PATCH", body: JSON.stringify(body) });
+      const b = {};
+      if (params.name) b.name = params.name;
+      if (params.topic !== undefined) b.topic = params.topic;
+      await discordFetch(`/channels/${params.channel_id}`, { method: "PATCH", body: JSON.stringify(b) });
       return { success: true, message: "Channel updated" };
     }
     case "DELETE_CHANNEL":
@@ -82,15 +80,15 @@ async function executeAction(action, params) {
   }
 }
 
-// ─── Build the Express app ───────────────────────────────────────────────
+// ─── Express app ─────────────────────────────────────────────────────────
 
-const app = createMcpExpressApp();
+const app = express();
 app.use(express.json());
 
-// MCP endpoint
-const pkg = require("@pasympa/discord-mcp/package.json");
+// MCP endpoint (standalone, no createMcpExpressApp)
+const mcpPkg = require("@pasympa/discord-mcp/package.json");
 app.post("/mcp", async (req, res) => {
-  const server = createServer(pkg.version);
+  const server = createDiscordMcpServer(mcpPkg.version);
   try {
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => crypto.randomUUID() });
     await server.connect(transport);
@@ -116,21 +114,25 @@ app.post("/api/command", async (req, res) => {
   }
 });
 
-// Serve React frontend
-const webDist = path.join(__dirname, "..", "web", "dist");
-app.use(express.static(webDist));
-app.get("*", (_req, res) => res.sendFile(path.join(webDist, "index.html")));
-
 // Health
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
+// Serve React frontend (with fallback to index.html for SPA)
+const webDist = path.join(__dirname, "..", "web", "dist");
+const fs = require("fs");
+if (fs.existsSync(webDist)) {
+  app.use(express.static(webDist));
+  app.get("*", (_req, res) => res.sendFile(path.join(webDist, "index.html")));
+  console.error(`Serving frontend from ${webDist}`);
+} else {
+  console.error(`Frontend build not found at ${webDist} — run: cd web && npm run build`);
+}
+
 // ─── Start ───────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.error(`Server on port ${PORT}`);
-  console.error(`Frontend: http://localhost:${PORT}`);
-  console.error(`MCP: http://localhost:${PORT}/mcp`);
-  console.error(`API: http://localhost:${PORT}/api/command`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.error(`Server running on port ${PORT}`);
+  console.error(`Health: http://0.0.0.0:${PORT}/health`);
 });
 
 startGeminiBot().catch((err) => console.error("Gemini bot failed:", err.message));
