@@ -1,5 +1,2 @@
 {
-  "functions": {
-    "api/command.ts": { "runtime": "@vercel/node@4" }
-  }
 }
