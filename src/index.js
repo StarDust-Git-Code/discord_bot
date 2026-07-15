@@ -84,9 +84,26 @@ async function executeAction(action, params) {
 // ─── Express app ─────────────────────────────────────────────────────────
 
 const app = express();
-app.use(express.json());
 
-// MCP endpoint (standalone, no createMcpExpressApp)
+// Manually parse JSON body for our routes
+app.use((req, res, next) => {
+  if (req.method === "POST" && (req.path === "/api/command" || req.path === "/mcp")) {
+    let data = "";
+    req.on("data", (chunk) => (data += chunk));
+    req.on("end", () => {
+      try {
+        req.body = data ? JSON.parse(data) : {};
+      } catch {
+        req.body = {};
+      }
+      next();
+    });
+  } else {
+    next();
+  }
+});
+
+// MCP endpoint
 const mcpPkg = require("@pasympa/discord-mcp/package.json");
 app.post("/mcp", async (req, res) => {
   const server = createDiscordMcpServer(mcpPkg.version);
