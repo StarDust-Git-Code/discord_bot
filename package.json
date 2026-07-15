@@ -1,0 +1,19 @@
+{
+  "name": "discord-mcp-server",
+  "version": "1.0.0",
+  "description": "Discord MCP Server + Gemini Flash Lite Bot — AI-powered Discord management via Claude, Cursor, and Gemini",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "start:mcp": "node node_modules/@pasympa/discord-mcp/dist/index.js"
+  },
+  "keywords": ["discord", "mcp", "claude", "gemini", "ai", "bot"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@modelcontextprotocol/sdk": "^1.15.0",
+    "@pasympa/discord-mcp": "^2.1.0",
+    "express": "^5.2.1"
+  }
+}

@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: discord-mcp-gemini
+    env: node
+    buildCommand: npm install
+    startCommand: node src/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash-lite
+      - key: DISCORD_MESSAGE_CONTENT
+        value: "true"
+      - key: DISCORD_GUILD_MEMBERS
+        value: "true"
+      - key: MCP_PORT
+        value: "3000"
