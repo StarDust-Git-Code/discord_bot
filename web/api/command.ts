@@ -1,9 +1,7 @@
 declare var process: { env: Record<string, string | undefined> };
-declare function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 
 const RENDER_API = process.env.RENDER_API_URL || "http://localhost:3000";
 const DISCORD_API = "https://discord.com/api/v10";
-const TIMEOUT_MS = 15000;
 
 const SYSTEM_PROMPT = `You are a Discord server manager. Parse the user's request and respond with JSON only.
 
@@ -19,6 +17,32 @@ Channel types: 0=text, 2=voice, 4=category
 
 Respond only with JSON: { "action": "ACTION", "params": { ... } }
 If unsure: { "action": "UNKNOWN", "params": { "reason": "..." } }`;
+
+async function callGemini(prompt: string): Promise<string> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY not set");
+
+  const res = await fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        systemInstruction: { role: "user", parts: [{ text: SYSTEM_PROMPT }] },
+        generationConfig: { temperature: 0.1, maxOutputTokens: 500 },
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini API error (${res.status}): ${err}`);
+  }
+
+  const data: any = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
 
 async function discordFetch(path: string, options: RequestInit = {}) {
   const token = process.env.DISCORD_TOKEN;
@@ -37,20 +61,7 @@ async function discordFetch(path: string, options: RequestInit = {}) {
 }
 
 async function handleDirect(command: string) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY not set");
-
-  const { GoogleGenerativeAI } = await import("@google/generative-ai");
-  const genAI = new GoogleGenerativeAI(key);
-  const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
-
-  const result = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: command }] }],
-    systemInstruction: { role: "user", parts: [{ text: SYSTEM_PROMPT }] },
-    generationConfig: { temperature: 0.1, maxOutputTokens: 500 },
-  });
-
-  const text = result.response.text().trim();
+  const text = await callGemini(command);
   const parsed = JSON.parse(text.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, ""));
   const { action, params } = parsed;
 
@@ -75,10 +86,7 @@ async function handleDirect(command: string) {
       const body: Record<string, unknown> = { name: params.name, type: params.type ?? 0 };
       if (params.topic) body.topic = params.topic;
       if (params.parent_id) body.parent_id = params.parent_id;
-      const channel = await discordFetch(`/guilds/${params.guild_id}/channels`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const channel = await discordFetch(`/guilds/${params.guild_id}/channels`, { method: "POST", body: JSON.stringify(body) });
       return { success: true, message: `Created ${["text", "voice", "category"][channel.type] || "channel"} #${channel.name}` };
     }
     case "EDIT_CHANNEL": {
@@ -86,37 +94,18 @@ async function handleDirect(command: string) {
       if (params.name) body.name = params.name;
       if (params.topic !== undefined) body.topic = params.topic;
       await discordFetch(`/channels/${params.channel_id}`, { method: "PATCH", body: JSON.stringify(body) });
-      return { success: true, message: `Channel updated` };
+      return { success: true, message: "Channel updated" };
     }
     case "DELETE_CHANNEL": {
       await discordFetch(`/channels/${params.channel_id}`, { method: "DELETE" });
-      return { success: true, message: `Channel deleted` };
+      return { success: true, message: "Channel deleted" };
     }
     case "SEND_MESSAGE": {
-      await discordFetch(`/channels/${params.channel_id}/messages`, {
-        method: "POST",
-        body: JSON.stringify({ content: params.content }),
-      });
-      return { success: true, message: `Message sent` };
+      await discordFetch(`/channels/${params.channel_id}/messages`, { method: "POST", body: JSON.stringify({ content: params.content }) });
+      return { success: true, message: "Message sent" };
     }
     default:
       return { success: false, message: "Unknown action" };
-  }
-}
-
-async function tryRender(command: string): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(`${RENDER_API}/api/command`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command }),
-      signal: controller.signal,
-    });
-    return res;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -131,9 +120,17 @@ export default async function handler(req: Request): Promise<Response> {
       return new Response(JSON.stringify({ error: "Missing 'command' field" }), { status: 400 });
     }
 
-    // Try Render backend first, fall back to direct Gemini + Discord
+    // Try Render backend first (quick 5s timeout)
     try {
-      const renderRes = await tryRender(command);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const renderRes = await fetch(`${RENDER_API}/api/command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
       if (renderRes.ok) {
         const data = await renderRes.json();
         return new Response(JSON.stringify(data), {
@@ -141,12 +138,11 @@ export default async function handler(req: Request): Promise<Response> {
           headers: { "Content-Type": "application/json" },
         });
       }
-      console.error("Render returned", renderRes.status, "- falling back to direct");
-    } catch (e: any) {
-      console.error("Render unreachable:", e.message);
+    } catch {
+      // Render unreachable, fall through
     }
 
-    // Fallback: direct Gemini + Discord
+    // Direct mode
     const data = await handleDirect(command);
     return new Response(JSON.stringify(data), {
       status: data.success ? 200 : 400,
