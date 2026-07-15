@@ -11,7 +11,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
-        value: gemini-2.0-flash-lite
+        value: gemini-3.1-flash-lite
       - key: DISCORD_MESSAGE_CONTENT
         value: "true"
       - key: DISCORD_GUILD_MEMBERS
