@@ -2,7 +2,7 @@ services:
   - type: web
     name: discord-mcp-gemini
     env: node
-    buildCommand: npm install
+    buildCommand: npm install && npm run build:web
     startCommand: node src/index.js
     healthCheckPath: /health
     envVars:
@@ -16,5 +16,5 @@ services:
         value: "true"
       - key: DISCORD_GUILD_MEMBERS
         value: "true"
-      - key: MCP_PORT
+      - key: PORT
         value: "3000"

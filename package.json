@@ -4,6 +4,7 @@
   "description": "Discord MCP Server + Gemini Flash Lite Bot — AI-powered Discord management via Claude, Cursor, and Gemini",
   "main": "src/index.js",
   "scripts": {
+    "build:web": "cd web && npm install && npm run build",
     "start": "node src/index.js",
     "start:mcp": "node node_modules/@pasympa/discord-mcp/dist/index.js"
   },
