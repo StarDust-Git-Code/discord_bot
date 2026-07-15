@@ -3,7 +3,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash-lite";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 const BOT_PREFIX = process.env.BOT_PREFIX || "!ask";
 const ALLOWED_CHANNELS = (process.env.GEMINI_ALLOWED_CHANNELS || "")
   .split(",")
