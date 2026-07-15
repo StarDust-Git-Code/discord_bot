@@ -1,5 +1,6 @@
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
 const crypto = require("crypto");
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
 const { createServer: createDiscordMcpServer } = require("@pasympa/discord-mcp/dist/server.js");
@@ -117,15 +118,20 @@ app.post("/api/command", async (req, res) => {
 // Health
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
-// Serve React frontend (with fallback to index.html for SPA)
+// Serve React frontend
 const webDist = path.join(__dirname, "..", "web", "dist");
-const fs = require("fs");
 if (fs.existsSync(webDist)) {
   app.use(express.static(webDist));
-  app.get("*", (_req, res) => res.sendFile(path.join(webDist, "index.html")));
+  app.use((req, res, next) => {
+    if (req.method === "GET" && !req.path.startsWith("/api") && !req.path.startsWith("/mcp") && !req.path.startsWith("/health")) {
+      res.sendFile(path.join(webDist, "index.html"));
+    } else {
+      next();
+    }
+  });
   console.error(`Serving frontend from ${webDist}`);
 } else {
-  console.error(`Frontend build not found at ${webDist} — run: cd web && npm run build`);
+  console.error(`Frontend build not found at ${webDist}`);
 }
 
 // ─── Start ───────────────────────────────────────────────────────────────
